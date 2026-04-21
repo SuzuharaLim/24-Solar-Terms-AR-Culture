@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AR 體驗 | 歲時</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js"></script>
+    <style>
+        :root { --apple-black: #000000; --apple-white: #F5F5F7; --apple-gold: #D4AF37; --apple-gray: #86868B; }
+        html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: var(--apple-black); font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif; -webkit-font-smoothing: antialiased; }
+        #ar-container { width: 100vw; height: 100vh; position: fixed; left: 0; top: 0; z-index: 1; }
+        
+        .close-btn { position: fixed; top: 20px; right: 20px; width: 44px; height: 44px; border-radius: 50%; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.15); display: flex; align-items: center; justify-content: center; color: var(--apple-white); text-decoration: none; z-index: 100; transition: transform 0.2s ease, background 0.2s ease; }
+        .close-btn:active { transform: scale(0.9); background: rgba(255, 255, 255, 0.2); }
+        .scanner-ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; pointer-events: none; transition: opacity 0.6s cubic-bezier(0.25, 1, 0.5, 1); }
+        .scanner-ui.hidden { opacity: 0; }
+        .scanner-frame { width: 70vw; height: 70vw; max-width: 320px; max-height: 320px; border: 1.5px solid rgba(255, 255, 255, 0.5); border-radius: 36px; box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.4); position: relative; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .scanner-frame.success { border-color: var(--apple-gold); box-shadow: 0 0 30px rgba(212, 175, 55, 0.6), 0 0 0 4000px rgba(0, 0, 0, 0.4); transform: scale(1.05); }
+        .scanner-text { margin-top: 30px; font-size: 1rem; color: var(--apple-white); letter-spacing: 0.1em; text-shadow: 0 2px 8px rgba(0,0,0,0.8); font-weight: 300; }
+        
+        .start-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); z-index: 200; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s ease; }
+        .start-overlay.hidden { opacity: 0; pointer-events: none; }
+        .start-overlay h1 { font-size: 1.5rem; font-weight: 500; margin-bottom: 8px; letter-spacing: 0.05em; }
+        .start-overlay p { font-size: 0.95rem; color: var(--apple-gray); margin-bottom: 30px; font-weight: 300; }
+        .btn-start { background: var(--apple-white); color: var(--apple-black); border: none; padding: 14px 40px; border-radius: 24px; font-size: 1rem; font-weight: 500; cursor: pointer; transition: transform 0.2s ease; text-decoration: none; display: inline-block; }
+        .btn-start:active { transform: scale(0.95); }
+        .fps { display: none; }
+    </style>
+</head>
+<body>
+    <div id="ar-container"></div>
+
+    <a href="discover.html" class="close-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+    </a>
+
+    <div class="scanner-ui" id="scanner-ui">
+        <div class="scanner-frame" id="scanner-frame"></div>
+        <div class="scanner-text" id="scanner-text">請將相機對準節氣圖卡</div>
+    </div>
+
+    <div class="start-overlay" id="start-overlay">
+        <h1>探索時光浮影</h1>
+        <p>需要取用您的相機以進入擴增實境</p>
+        <button class="btn-start" id="btn-start">允許並開始</button>
+    </div>
+
+    <div class="fps" id="fpsBox">FPS: --</div>
+
+    <script>
+        const startOverlay = document.getElementById("start-overlay");
+        const btnStart = document.getElementById("btn-start");
+        const scannerUi = document.getElementById("scanner-ui");
+        const scannerFrame = document.getElementById("scanner-frame");
+        const scannerText = document.getElementById("scanner-text");
+        const fpsBox = document.getElementById("fpsBox");
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetId = urlParams.get('id');
+
+        if (!targetId) {
+            scannerText.textContent = "未指定節氣，請從圖鑑進入。";
+            startOverlay.innerHTML = `
+                <h1>無法啟動 AR</h1>
+                <p>請先在圖鑑中選擇一個節氣探索</p>
+                <a href="discover.html" class="btn-start">返回圖鑑</a>
+            `;
+        }
+
+        function getVideoExtension() {
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            return (isIOS || isSafari) ? '.mov' : '.webm';
+        }
+        const videoExt = getVideoExtension();
+
+        let mindarThree, renderer, scene, camera, anchor, termData;
+        let smoothedGroup, contentGroup;
+        let currentActiveLayers = [];
+        let isTargetVisible = false;
+
+        const CONTENT_SCALE = 0.7;
+        const LAYER_BASE_H = 0.85;
+        const LAYER_GAP = 0.04;
+        const SMOOTH_POS = 0.18, SMOOTH_ROT = 0.22, SMOOTH_SCL = 0.18;
+
+        const tmpPos = new THREE.Vector3();
+        const tmpQuat = new THREE.Quaternion();
+        const tmpScale = new THREE.Vector3();
+
+        const makeLayer = (baseSrc, renderOrder, zOffset) => {
+            const v = document.createElement("video");
+            const fullSrc = `${baseSrc}${videoExt}`; // 自動補上 .webm 或 .mov
+            v.src = fullSrc;
+            v.muted = true; v.loop = true; v.playsInline = true;
+            v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
+            v.crossOrigin = "anonymous"; v.preload = "metadata";
+
+            // ⚠️ 防呆機制：如果找不到影片，在畫面上跳出警告
+            v.addEventListener("error", () => {
+                console.error(`找不到影片檔案：${fullSrc}`);
+                scannerText.textContent = `⚠️ 缺少影片：${fullSrc} (請檢查副檔名)`;
+                scannerText.style.color = "#FF3B30"; // 變成紅色提示
+            });
+
+            const tex = new THREE.VideoTexture(v);
+            tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+
+            const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+            mesh.visible = false; mesh.renderOrder = renderOrder; mesh.position.z = zOffset;
+
+            const applyAspect = () => {
+                const w = v.videoWidth || 1; const h = v.videoHeight || 1;
+                mesh.scale.set(LAYER_BASE_H * (w / h), LAYER_BASE_H, 1);
+            };
+
+            if (v.readyState >= 1) applyAspect();
+            else v.addEventListener("loadedmetadata", applyAspect, { once: true });
+
+            return { video: v, texture: tex, material: mat, mesh };
+        };
+
+        const showAll = () => { for (const L of currentActiveLayers) L.mesh.visible = true; };
+        const hideAll = () => { for (const L of currentActiveLayers) L.mesh.visible = false; };
+        const playAll = async () => { showAll(); for (const L of currentActiveLayers) { try { if (L.video.paused) await L.video.play(); } catch (e) {} } };
+        const pauseAll = () => { hideAll(); for (const L of currentActiveLayers) { try { L.video.pause(); } catch (e) {} } };
+
+        let frames = 0, lastFpsUpdate = performance.now(), lastRenderT = 0;
+        const FPS_LIMIT = 45, FRAME_MS = 1000 / FPS_LIMIT;
+        let usingRVFC = false, rvfcInited = false;
+
+        const updateSmoothedPose = () => {
+            if (!anchor || !anchor.group) return;
+            anchor.group.updateMatrixWorld(true);
+            anchor.group.getWorldPosition(tmpPos);
+            anchor.group.getWorldQuaternion(tmpQuat);
+            anchor.group.getWorldScale(tmpScale);
+
+            if (!smoothedGroup.visible) {
+                smoothedGroup.position.copy(tmpPos); smoothedGroup.quaternion.copy(tmpQuat); smoothedGroup.scale.copy(tmpScale);
+                return;
+            }
+            smoothedGroup.position.lerp(tmpPos, SMOOTH_POS);
+            smoothedGroup.quaternion.slerp(tmpQuat, SMOOTH_ROT);
+            smoothedGroup.scale.lerp(tmpScale, SMOOTH_SCL);
+        };
+
+        const renderOnce = (t) => {
+            frames++;
+            if (t - lastFpsUpdate >= 500) {
+                fpsBox.textContent = "FPS: " + Math.round((frames * 1000) / (t - lastFpsUpdate));
+                frames = 0; lastFpsUpdate = t;
+            }
+            updateSmoothedPose();
+            renderer.render(scene, camera);
+        };
+
+        const startRenderLoopFallback = () => {
+            renderer.setAnimationLoop((t) => {
+                if (!isTargetVisible || t - lastRenderT < FRAME_MS) return;
+                lastRenderT = t; renderOnce(t);
+            });
+        };
+        const stopRenderLoop = () => { renderer.setAnimationLoop(null); };
+
+        const setupVideoFrameCallbackOnce = () => {
+            if (rvfcInited) return;
+            const v0 = currentActiveLayers[0]?.video;
+            if (!v0 || typeof v0.requestVideoFrameCallback !== "function") return;
+
+            rvfcInited = true; usingRVFC = true;
+            const onFrame = (now) => {
+                v0.requestVideoFrameCallback(onFrame);
+                if (!isTargetVisible || now - lastRenderT < FRAME_MS) return;
+                lastRenderT = now; renderOnce(now);
+            };
+
+            // ⚠️ 關鍵修復：等影片確實載入資料後，才呼叫影格更新，徹底解決 Crash 問題
+            if (v0.readyState >= 2) {
+                v0.requestVideoFrameCallback(onFrame);
+            } else {
+                v0.addEventListener('loadeddata', () => {
+                    v0.requestVideoFrameCallback(onFrame);
+                }, { once: true });
+                
+                // 如果影片壞掉，降級回傳統渲染迴圈，確保 AR 畫面不會當機
+                v0.addEventListener('error', () => {
+                    usingRVFC = false;
+                    stopRenderLoop();
+                    startRenderLoopFallback();
+                });
+            }
+        };
+
+        let started = false;
+
+        if (targetId) {
+            btnStart.addEventListener("click", async () => {
+                if (started) return;
+
+                if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    alert("⚠️ 錯誤：您的連線不安全 (非 HTTPS)。手機瀏覽器會強制阻擋相機權限，請改用 HTTPS 連線測試。");
+                    return;
+                }
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    alert("⚠️ 錯誤：無法存取相機！\n請確認：\n1. 您是否使用了 LINE 或 Facebook 內建瀏覽器？(請改用 Safari / Chrome)\n2. 手機的相機權限是否已開啟？");
+                    return;
+                }
+
+                started = true;
+                startOverlay.classList.add("hidden");
+                scannerText.textContent = "正在啟動 AR 引擎...";
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                try {
+                    smoothedGroup = new THREE.Group();
+                    contentGroup = new THREE.Group();
+                    smoothedGroup.add(contentGroup);
+                    smoothedGroup.visible = false;
+
+                    const response = await fetch('./data/ar-assets.json');
+                    if (!response.ok) throw new Error("無法讀取 data/ar-assets.json");
+                    const allAssets = await response.json();
+                    
+                    termData = allAssets.find(item => item.id === targetId);
+                    if (!termData) throw new Error("找不到對應的節氣資源：" + targetId);
+
+                    let resolvedMindUrl = termData.mindUrl;
+                    if (resolvedMindUrl.startsWith("./assets/")) resolvedMindUrl = "./data/assets/" + resolvedMindUrl.substring(9);
+
+                    currentActiveLayers = termData.layers.map((baseSrc, i) => {
+                        let safeSrc = baseSrc;
+                        // 自動修正路徑，確保抓得到 layers 資料夾
+                        if (safeSrc.startsWith("layers/")) safeSrc = "data/assets/" + safeSrc;
+                        return makeLayer(safeSrc, i + 1, i * LAYER_GAP);
+                    });
+                    
+                    currentActiveLayers.forEach(L => contentGroup.add(L.mesh));
+                    contentGroup.scale.set(CONTENT_SCALE, CONTENT_SCALE, CONTENT_SCALE);
+
+                    mindarThree = new window.MINDAR.IMAGE.MindARThree({
+                        container: document.querySelector("#ar-container"),
+                        imageTargetSrc: resolvedMindUrl, 
+                        maxTrack: 1
+                    });
+                    
+                    renderer = mindarThree.renderer; scene = mindarThree.scene; camera = mindarThree.camera;
+                    scene.add(smoothedGroup);
+                    anchor = mindarThree.addAnchor(0);
+                    
+                    anchor.onTargetFound = async () => {
+                        isTargetVisible = true;
+                        smoothedGroup.visible = true;
+                        
+                        scannerFrame.classList.add('success');
+                        scannerText.textContent = `感知到：${termData.name}`;
+                        scannerText.style.color = "var(--apple-white)"; // 恢復白色字體
+                        setTimeout(() => { if (isTargetVisible) scannerUi.classList.add('hidden'); }, 600);
+
+                        await playAll();
+                        lastRenderT = 0; frames = 0; lastFpsUpdate = performance.now();
+                    };
+
+                    anchor.onTargetLost = () => {
+                        isTargetVisible = false;
+                        pauseAll();
+                        smoothedGroup.visible = false;
+                        
+                        scannerFrame.classList.remove('success');
+                        scannerText.textContent = `請將相機對準「${termData.name}」圖卡`;
+                        scannerUi.classList.remove('hidden');
+                        fpsBox.textContent = "FPS: --";
+                    };
+
+                    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+                    await mindarThree.start();
+                    
+                    const handleResize = () => {
+                        const container = document.querySelector("#ar-container");
+                        renderer.setSize(container.clientWidth, container.clientHeight, false);
+                        camera.aspect = container.clientWidth / container.clientHeight;
+                        camera.updateProjectionMatrix();
+                        if (mindarThree.resize) mindarThree.resize();
+                    };
+                    window.addEventListener("resize", handleResize);
+                    window.addEventListener("orientationchange", () => setTimeout(handleResize, 300));
+                    handleResize();
+
+                    setupVideoFrameCallbackOnce();
+                    if (!usingRVFC) { stopRenderLoop(); startRenderLoopFallback(); }
+
+                    scannerText.textContent = `請將相機對準「${termData.name}」圖卡`;
+
+                } catch (err) {
+                    console.error(err);
+                    alert("啟動失敗：\n" + err.message + "\n\n請確認資料夾路徑！");
+                    scannerText.textContent = "啟動失敗，請重新整理頁面。";
+                    startOverlay.classList.remove("hidden");
+                    started = false;
+                }
+            });
+        }
+    </script>
+</body>
+</html>

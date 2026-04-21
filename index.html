@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>今日節氣 | 歲時</title>
+    <style>
+        :root {
+            --apple-black: #000000;
+            --apple-white: #F5F5F7;
+            --apple-gray: #86868B;
+            --glow-color: rgba(255, 255, 255, 0.1); 
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--apple-black);
+            color: var(--apple-white);
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica Neue", sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .bg-blur {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70vw;
+            height: 70vw;
+            background: radial-gradient(circle, var(--glow-color) 0%, rgba(0,0,0,0) 70%);
+            transform: translate(-50%, -50%);
+            filter: blur(80px);
+            animation: breathe 8s infinite alternate ease-in-out;
+            z-index: 1;
+            transition: background 2s ease;
+        }
+
+        @keyframes breathe {
+            0% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+            100% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.9; }
+        }
+
+        .content {
+            text-align: center;
+            z-index: 10;
+            animation: slideUpSpring 1.4s cubic-bezier(0.175, 0.885, 0.32, 1.1) forwards;
+            opacity: 0;
+            transform: translateY(40px);
+        }
+
+        @keyframes slideUpSpring {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .content h1 {
+            font-size: 5.5rem;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: 0.08em;
+            text-shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        .content p.subtitle {
+            font-size: 1.25rem;
+            color: var(--apple-gray);
+            margin-top: 12px;
+            font-weight: 300;
+            letter-spacing: 0.05em;
+        }
+
+        .nav-btn {
+            position: absolute;
+            bottom: 60px;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 40px;
+            padding: 14px 36px;
+            color: var(--apple-white);
+            font-size: 1.05rem;
+            text-decoration: none;
+            font-weight: 400;
+            letter-spacing: 0.02em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            animation: fadeInBtn 1s ease forwards 0.8s;
+            opacity: 0;
+        }
+
+        @keyframes fadeInBtn { to { opacity: 1; } }
+
+        .nav-btn:hover, .nav-btn:active {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-3px) scale(1.02);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-blur"></div>
+
+    <div class="content">
+        <h1 id="term-name">...</h1>
+        <p class="subtitle" id="term-subtitle">正在感知當前時節</p>
+    </div>
+
+    <a href="discover.html" class="nav-btn">
+        進入節氣圖鑑
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5M5 12l7-7 7 7"/>
+        </svg>
+    </a>
+
+    <script>
+        const seasonColors = {
+            spring: 'rgba(46, 139, 87, 0.4)',  
+            summer: 'rgba(178, 34, 34, 0.4)',  
+            autumn: 'rgba(218, 165, 32, 0.4)', 
+            winter: 'rgba(70, 130, 180, 0.4)'  
+        };
+
+        async function initApp() {
+            try {
+                // 正確讀取外部 JSON 檔案
+                const response = await fetch('./data/SolarTerm.json');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const solarData = await response.json();
+
+                // 取得當下日期並計算 (如 4月18日 = 418)
+                const today = new Date();
+                const md = (today.getMonth() + 1) * 100 + today.getDate();
+                let currentTerm = null;
+
+                for (const key in solarData) {
+                    const term = solarData[key];
+                    if (term.start_md > term.end_md) {
+                        // 處理跨年特例 (如冬至)
+                        if (md >= term.start_md || md <= term.end_md) { currentTerm = term; break; }
+                    } else {
+                        // 正常區間判斷
+                        if (md >= term.start_md && md <= term.end_md) { currentTerm = term; break; }
+                    }
+                }
+
+                if (currentTerm) {
+                    document.getElementById('term-name').textContent = currentTerm.name;
+                    // 自動濾掉最後一句迷語人台詞
+                    const poetryLines = currentTerm.poetry.split('<br>');
+                    const cleanSubtitle = poetryLines.slice(0, 2).join('，'); 
+                    document.getElementById('term-subtitle').textContent = cleanSubtitle;
+
+                    // 情境色彩判斷
+                    let season = 'spring';
+                    if (currentTerm.start_md >= 505 && currentTerm.start_md <= 806) season = 'summer';
+                    else if (currentTerm.start_md >= 807 && currentTerm.start_md <= 1106) season = 'autumn';
+                    else if (currentTerm.start_md >= 1107 || currentTerm.start_md <= 203) season = 'winter';
+
+                    document.documentElement.style.setProperty('--glow-color', seasonColors[season]);
+                }
+            } catch (error) {
+                console.error("載入節氣資料失敗:", error);
+                document.getElementById('term-subtitle').textContent = "資料讀取失敗，請確認是否使用 Local Server 運行環境";
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
